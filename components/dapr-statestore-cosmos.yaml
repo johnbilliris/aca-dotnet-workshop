@@ -7,9 +7,9 @@ spec:
   version: v1
   metadata:
   - name: url
-    value: https://taskstracker-state-store.documents.azure.com:443/
+    value: https://taskstracker-state-store-jb.documents.azure.com:443/
   - name: masterKey
-    value: "<Master Key>"
+    value: "2Xa8b144IfF6oex8UZ0tWNvrWqsRVPfiMm1nCpLVs5heT7XYSnxqAhR78a0ZwzskAVFJ9F73Y22IACDbQhOtvw=="
   - name: database
     value: tasksmanagerdb
   - name: collection

@@ -2,7 +2,7 @@ componentType: state.azure.cosmosdb
 version: v1
 metadata:
 - name: url
-  value: https://taskstracker-state-store.documents.azure.com:443/
+  value: https://taskstracker-state-store-jb.documents.azure.com:443/
 - name: database
   value: tasksmanagerdb
 - name: collection

@@ -16,3 +16,5 @@ spec:
     value: "true"
   - name: route
     value: /externaltasksprocessor/process    
+scopes:
+- tasksmanager-backend-api-none

@@ -1,0 +1,141 @@
+# Login to Azure
+az login 
+# Only required if you have multiple subscriptions
+az account set --subscription 2e20e6b8-e24f-4d7a-ad5c-bfdde4b8708f
+
+
+$RESOURCE_GROUP="tasks-tracker-rg"
+$LOCATION="eastus"
+$ENVIRONMENT="tasks-tracker-containerapps-env"
+$WORKSPACE_NAME="law-eaus-taskstracker"
+$APPINSIGHTS_NAME="appinsights-eaus-taskstracker"
+$BACKEND_API_NAME="tasksmanager-backend-api"
+$ACR_NAME="acreaustaskstracker"
+$FRONTEND_WEBAPP_NAME="tasksmanager-frontend-webapp"
+
+cd TasksTracker.TasksManager.Backend.Api
+dapr run --app-id tasksmanager-backend-api --app-port 7088 --dapr-http-port 3500 --app-ssl --resources-path "../components" -- dotnet run
+
+curl -X POST http://localhost:3500/v1.0/state/statestore -H "Content-Type: application/json" -d '
+[
+    {
+        "key": "Book1",
+        "value": {
+            "title": "Parallel and High Performance Computing",
+            "author": "Robert Robey",
+            "genre": "Technical"
+        }
+    },
+    {
+        "key": "Book2",
+        "value": {
+            "title": "Software Engineering Best Practices",
+            "author": "Capers Jones",
+            "genre": "Technical"
+        }
+    },
+    {
+        "key": "Book3",
+        "value": {
+            "title": "The Unstoppable Mindset",
+            "author": "Jessica Marks",
+            "genre": "Self Improvement",
+            "formats":["kindle", "audiobook", "papercover"]
+        }
+    }
+]
+'
+
+curl -X GET http://localhost:3500/v1.0/state/statestore/Book3 
+
+
+
+# Use Azure Cosmos DB with Dapr State Store Management API¶
+# 1. Provision Cosmos DB Resources
+$COSMOS_DB_ACCOUNT="taskstracker-state-store-jb"
+$COSMOS_DB_DBNAME="tasksmanagerdb"
+$COSMOS_DB_CONTAINER="taskscollection" 
+
+## Check if Cosmos account name already exists globally
+az cosmosdb check-name-exists --name $COSMOS_DB_ACCOUNT
+
+## if it returns false continue with the next command 
+## else try a new unique name
+
+## Create a Cosmos account for SQL API
+az cosmosdb create --name $COSMOS_DB_ACCOUNT --resource-group $RESOURCE_GROUP
+
+## Create a SQL API database
+az cosmosdb sql database create --account-name $COSMOS_DB_ACCOUNT --resource-group $RESOURCE_GROUP --name $COSMOS_DB_DBNAME
+
+## Create a SQL API container
+az cosmosdb sql container create `
+    --account-name $COSMOS_DB_ACCOUNT `
+    --resource-group $RESOURCE_GROUP `
+    --database-name $COSMOS_DB_DBNAME `
+    --name $COSMOS_DB_CONTAINER `
+    --partition-key-path "/id" `
+    --throughput 400
+
+## List Azure CosmosDB keys
+$PRIMARY_MASTER_KEY=az cosmosdb keys list --name $COSMOS_DB_ACCOUNT --resource-group $RESOURCE_GROUP --query primaryMasterKey -o tsv
+
+
+
+# Configure Managed Identities in Container App
+# 1. Create system-assigned identity for our container app
+az containerapp identity assign `
+  --resource-group $RESOURCE_GROUP `
+  --name $BACKEND_API_NAME `
+  --system-assigned
+
+
+$PRINCIPAL_ID=az containerapp identity show --resource-group $RESOURCE_GROUP --name $BACKEND_API_NAME --query principalId -o tsv # Principal Id after creating system identity for container app 
+$ROLE_ID = "00000000-0000-0000-0000-000000000002" #"Cosmos DB Built-in Data Contributor" 
+
+az cosmosdb sql role assignment create `
+--account-name  $COSMOS_DB_ACCOUNT `
+--resource-group $RESOURCE_GROUP `
+--scope "/" `
+--principal-id $PRINCIPAL_ID `
+--role-definition-id $ROLE_ID
+
+
+# CD to the root directory!
+
+# 2. Build Frontend Web App and Backend API App Images and Push Them to ACR
+az acr build --registry $ACR_NAME --image "tasksmanager/$BACKEND_API_NAME" --file 'TasksTracker.TasksManager.Backend.Api/Dockerfile' .
+
+az acr build --registry $ACR_NAME --image "tasksmanager/$FRONTEND_WEBAPP_NAME" --file 'TasksTracker.WebPortal.Frontend.Ui/Dockerfile' .
+
+# 3. Add Cosmos DB Dapr State Store to Azure Container Apps Environment
+az containerapp env dapr-component set `
+ --name $ENVIRONMENT --resource-group $RESOURCE_GROUP `
+ --dapr-component-name statestore `
+ --yaml '.\aca-components\containerapps-statestore-cosmos.yaml'
+
+# 4. Enable Dapr for the Frontend Web App and Backend API Container Apps
+az containerapp dapr enable --name $BACKEND_API_NAME `
+                            --resource-group $RESOURCE_GROUP `
+                            --dapr-app-id  $BACKEND_API_NAME `
+                            --dapr-app-port  80
+
+az containerapp dapr enable --name $FRONTEND_WEBAPP_NAME `
+                            --resource-group $RESOURCE_GROUP `
+                            --dapr-app-id  $FRONTEND_WEBAPP_NAME `
+                            --dapr-app-port  80
+
+
+# 5. Deploy New Revisions of the Frontend Web App and Backend API to Container Apps
+## Update Frontend web app container app and create a new revision 
+az containerapp update `
+    --name $FRONTEND_WEBAPP_NAME  `
+    --resource-group $RESOURCE_GROUP `
+    --revision-suffix v20230218
+
+
+## Update Backend API App container app and create a new revision 
+az containerapp update `
+    --name $BACKEND_API_NAME  `
+    --resource-group $RESOURCE_GROUP `
+    --revision-suffix v20230218-1

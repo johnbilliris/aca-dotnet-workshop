@@ -16,3 +16,5 @@ spec:
     value: false
   - name: publicAccessLevel
     value: "none"
+scopes:
+- tasksmanager-backend-api-none
