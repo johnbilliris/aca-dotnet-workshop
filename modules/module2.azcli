@@ -1,0 +1,51 @@
+# Login to Azure
+az login 
+# Only required if you have multiple subscriptions
+az account set --subscription 2e20e6b8-e24f-4d7a-ad5c-bfdde4b8708f
+
+
+$RESOURCE_GROUP="tasks-tracker-rg"
+$LOCATION="eastus"
+$ENVIRONMENT="tasks-tracker-containerapps-env"
+$WORKSPACE_NAME="law-eaus-taskstracker"
+$APPINSIGHTS_NAME="appinsights-eaus-taskstracker"
+$BACKEND_API_NAME="tasksmanager-backend-api"
+$ACR_NAME="acreaustaskstracker"
+
+
+
+# 2. Deploy Razor Pages Web App Frontend Project to ACA
+$FRONTEND_WEBAPP_NAME="tasksmanager-frontend-webapp"
+
+# CD to the root directory 
+az acr build --registry $ACR_NAME --image "tasksmanager/$FRONTEND_WEBAPP_NAME" --file 'TasksTracker.WebPortal.Frontend.Ui/Dockerfile' .
+
+$BACKEND_API_URL=az containerapp show --resource-group $RESOURCE_GROUP --name $BACKEND_API_NAME --query properties.configuration.ingress.fqdn -o tsv
+
+az containerapp create `
+--name "$FRONTEND_WEBAPP_NAME"  `
+--resource-group $RESOURCE_GROUP `
+--environment $ENVIRONMENT `
+--image "$ACR_NAME.azurecr.io/tasksmanager/$FRONTEND_WEBAPP_NAME" `
+--registry-server "$ACR_NAME.azurecr.io" `
+--target-port 80 `
+--ingress 'external' `
+--min-replicas 1 `
+--max-replicas 1 `
+--cpu 0.25 --memory 0.5Gi `
+--query configuration.ingress.fqdn `
+--env-vars "BackendApiConfig__BaseUrlExternalHttp=https://$BACKEND_API_URL/" "ASPNETCORE_ENVIRONMENT=Development"
+
+# 3. Update Backend Web API Container App Ingress property
+az containerapp ingress enable `
+    --name  $BACKEND_API_NAME  `
+    --resource-group  $RESOURCE_GROUP `
+    --target-port 80 `
+    --type "internal"
+
+$BACKEND_API_URL=az containerapp show --resource-group $RESOURCE_GROUP --name $BACKEND_API_NAME --query properties.configuration.ingress.fqdn -o tsv
+
+az containerapp update `
+    --name "$FRONTEND_WEBAPP_NAME"  `
+    --resource-group $RESOURCE_GROUP `
+    --set-env-vars "BackendApiConfig__BaseUrlExternalHttp=https://$BACKEND_API_URL/"

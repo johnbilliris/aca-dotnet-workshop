@@ -1,74 +1,63 @@
-using Dapr.Client;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using TasksTracker.WebPortal.Frontend.Ui.Pages.Tasks.Models;
 
-namespace TasksTracker.WebPortal.Frontend.Ui.Pages.Tasks
-{
-    public class EditModel : PageModel
+    namespace TasksTracker.WebPortal.Frontend.Ui.Pages.Tasks
     {
-        private readonly IHttpClientFactory _httpClientFactory;
-        private readonly DaprClient _daprClient;
-
-        [BindProperty]
-        public TaskUpdateModel? TaskUpdate { get; set; }
-
-        public EditModel(IHttpClientFactory httpClientFactory, DaprClient daprClient)
+        public class EditModel : PageModel
         {
-            _httpClientFactory = httpClientFactory;
-            _daprClient = daprClient;
-        }
+            private readonly IHttpClientFactory _httpClientFactory;
 
-        public async Task<IActionResult> OnGetAsync(Guid? id)
-        {
-            if (id == null)
+            [BindProperty]
+            public TaskUpdateModel? TaskUpdate { get; set; }
+
+            public EditModel(IHttpClientFactory httpClientFactory)
             {
-                return NotFound();
+                _httpClientFactory = httpClientFactory;
             }
 
-            // direct svc to svc http request
-            // var httpClient = _httpClientFactory.CreateClient("BackEndApiExternal");
-            // var Task = await httpClient.GetFromJsonAsync<TaskModel>($"api/tasks/{id}");
-
-            //Dapr SideCar Invocation
-            var Task = await _daprClient.InvokeMethodAsync<TaskModel>(HttpMethod.Get, "tasksmanager-backend-api", $"api/tasks/{id}");
-
-            if (Task == null)
+            public async Task<IActionResult> OnGetAsync(Guid? id)
             {
-                return NotFound();
-            }
+                if (id == null)
+                {
+                    return NotFound();
+                }
 
-            TaskUpdate = new TaskUpdateModel()
-            {
-                TaskId = Task.TaskId,
-                TaskName = Task.TaskName,
-                TaskAssignedTo = Task.TaskAssignedTo,
-                TaskDueDate = Task.TaskDueDate,
-            };
+                // direct svc to svc http request
+                var httpClient = _httpClientFactory.CreateClient("BackEndApiExternal");
+                var Task = await httpClient.GetFromJsonAsync<TaskModel>($"api/tasks/{id}");
 
-            return Page();
-        }
+                if (Task == null)
+                {
+                    return NotFound();
+                }
 
+                TaskUpdate = new TaskUpdateModel()
+                {
+                    TaskId = Task.TaskId,
+                    TaskName = Task.TaskName,
+                    TaskAssignedTo = Task.TaskAssignedTo,
+                    TaskDueDate = Task.TaskDueDate,
+                };
 
-        public async Task<IActionResult> OnPostAsync()
-        {
-            if (!ModelState.IsValid)
-            {
                 return Page();
             }
 
-            if (TaskUpdate != null)
+            public async Task<IActionResult> OnPostAsync()
             {
-                // direct svc to svc http request
-                // var httpClient = _httpClientFactory.CreateClient("BackEndApiExternal");
-                // var result = await httpClient.PutAsJsonAsync($"api/tasks/{TaskUpdate.TaskId}", TaskUpdate);
+                if (!ModelState.IsValid)
+                {
+                    return Page();
+                }
 
-                //Dapr SideCar Invocation
-                await _daprClient.InvokeMethodAsync<TaskUpdateModel>(HttpMethod.Put, "tasksmanager-backend-api", $"api/tasks/{TaskUpdate.TaskId}", TaskUpdate);
+                if (TaskUpdate != null)
+                {
+                    // direct svc to svc http request
+                    var httpClient = _httpClientFactory.CreateClient("BackEndApiExternal");
+                    var result = await httpClient.PutAsJsonAsync($"api/tasks/{TaskUpdate.TaskId}", TaskUpdate);
+                }
 
+                return RedirectToPage("./Index");
             }
-
-            return RedirectToPage("./Index");
         }
     }
-}
