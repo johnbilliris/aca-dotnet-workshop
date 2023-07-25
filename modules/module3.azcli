@@ -1,0 +1,27 @@
+# Login to Azure
+az login 
+# Only required if you have multiple subscriptions
+az account set --subscription 2e20e6b8-e24f-4d7a-ad5c-bfdde4b8708f
+
+
+$RESOURCE_GROUP="tasks-tracker-rg"
+$LOCATION="eastus"
+$ENVIRONMENT="tasks-tracker-containerapps-env"
+$WORKSPACE_NAME="law-eaus-taskstracker"
+$APPINSIGHTS_NAME="appinsights-eaus-taskstracker"
+$BACKEND_API_NAME="tasksmanager-backend-api"
+$ACR_NAME="acreaustaskstracker"
+$FRONTEND_WEBAPP_NAME="tasksmanager-frontend-webapp"
+
+
+cd TasksTracker.TasksManager.Backend.Api
+dapr run --app-id tasksmanager-backend-api --app-port 7088 --dapr-http-port 3500 --app-ssl -- dotnet run
+
+http://localhost:3500/v1.0/invoke/tasksmanager-backend-api/method/api/tasks?createdBy=tjoudeh@bitoftech.net
+cd ..
+
+cd TasksTracker.WebPortal.Frontend.Ui
+dapr run --app-id tasksmanager-frontend-webapp --app-port 7208 --dapr-http-port 3501 --app-ssl -- dotnet run
+
+cd TasksTracker.TasksManager.Backend.Api
+dapr run --app-id tasksmanager-backend-api --app-port 7088 --dapr-http-port 3500 --app-ssl -- dotnet run
