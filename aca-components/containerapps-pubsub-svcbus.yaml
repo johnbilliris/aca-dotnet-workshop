@@ -3,7 +3,7 @@ componentType: pubsub.azure.servicebus
 version: v1
 metadata:
 - name: namespaceName
-  value: "taskstracker.servicebus.windows.net"
+  value: "sbn-eaus-taskstracker.servicebus.windows.net"
 - name: consumerID
   value: "tasks-processor-subscription"  
 # Application scopes  

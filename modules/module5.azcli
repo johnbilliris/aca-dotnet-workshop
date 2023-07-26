@@ -1,0 +1,179 @@
+# Login to Azure
+az login 
+# Only required if you have multiple subscriptions
+az account set --subscription 2e20e6b8-e24f-4d7a-ad5c-bfdde4b8708f
+
+
+$RESOURCE_GROUP="tasks-tracker-rg"
+$LOCATION="eastus"
+$ENVIRONMENT="tasks-tracker-containerapps-env"
+$WORKSPACE_NAME="law-eaus-taskstracker"
+$APPINSIGHTS_NAME="appinsights-eaus-taskstracker"
+$BACKEND_API_NAME="tasksmanager-backend-api"
+$ACR_NAME="acreaustaskstracker"
+$FRONTEND_WEBAPP_NAME="tasksmanager-frontend-webapp"
+$COSMOS_DB_ACCOUNT="taskstracker-state-store-jb"
+$COSMOS_DB_DBNAME="tasksmanagerdb"
+$COSMOS_DB_CONTAINER="taskscollection" 
+
+
+cd TasksTracker.TasksManager.Backend.Api
+dapr run --app-id tasksmanager-backend-api --app-port 7088 --dapr-http-port 3500 --app-ssl --resources-path "../components" -- dotnet run
+
+curl -X POST http://localhost:3500/v1.0/publish/taskspubsub/tasksavedtopic -H "Content-Type: application/json" -d '
+[
+    {
+    "taskId": "fbc55b2c-d9fa-405e-aec8-22e53f4306dd",
+    "taskName": "Testing Pub Sub Publisher",
+    "taskCreatedBy": "user@mail.net",
+    "taskCreatedOn": "2023-02-12T00:24:37.7361348Z",
+    "taskDueDate": "2023-02-20T00:00:00",
+    "taskAssignedTo": "user2@mail.com"
+    }
+]
+'
+
+cd ..
+cd TasksTracker.TasksManager.Backend.Api
+dotnet build .
+dapr run --app-id tasksmanager-backend-api --app-port 7088 --dapr-http-port 3500 --app-ssl --resources-path "../components" dotnet run
+
+cd ..
+cd TasksTracker.Processor.Backend.Svc
+dotnet build .
+dapr run --app-id tasksmanager-backend-processor --app-port 7263 --dapr-http-port 3502 --app-ssl --resources-path "../components" dotnet run
+
+
+curl -X POST http://localhost:3500/v1.0/publish/taskspubsub/tasksavedtopic -H "Content-Type: application/json" -d '
+[
+    {
+        "taskId": "fbc55b2c-d9fa-405e-aec8-22e53f4306dd",
+        "taskName": "Testing Pub Sub Publisher",
+        "taskCreatedBy": "user@mail.net",
+        "taskCreatedOn": "2023-02-12T00:24:37.7361348Z",
+        "taskDueDate": "2023-02-20T00:00:00",
+        "taskAssignedTo": "user2@mail.com"
+    }
+]'
+
+
+$NamespaceName="sbn-eaus-taskstracker"
+$TopicName="tasksavedtopic"
+$TopicSubscription="tasks-processor-subscription"
+
+##Create servicebus namespace
+az servicebus namespace create --resource-group $RESOURCE_GROUP --name $NamespaceName --location $LOCATION --sku Standard
+
+##Create a topic under the namespace
+az servicebus topic create --resource-group $RESOURCE_GROUP --namespace-name $NamespaceName --name $TopicName
+
+##Create a topic subscription
+az servicebus topic subscription create `
+    --resource-group $RESOURCE_GROUP `
+    --namespace-name $NamespaceName `
+    --topic-name $TopicName `
+    --name $TopicSubscription
+
+##List connection string
+az servicebus namespace authorization-rule keys list `
+    --resource-group $RESOURCE_GROUP `
+    --namespace-name $NamespaceName `
+    --name RootManageSharedAccessKey `
+    --query primaryConnectionString `
+    --output tsv
+
+
+# Deploy the Backend Background Processor and the Backend API Projects to Azure Container Apps
+# 1. Build the Backend Background Processor and the Backend API App Images and Push Them to ACR
+$BACKEND_SVC_NAME="tasksmanager-backend-processor"
+az acr build --registry $ACR_NAME --image "tasksmanager/$BACKEND_API_NAME" --file 'TasksTracker.TasksManager.Backend.Api/Dockerfile' . 
+az acr build --registry $ACR_NAME --image "tasksmanager/$BACKEND_SVC_NAME" --file 'TasksTracker.Processor.Backend.Svc/Dockerfile' .
+
+# 2. Create a new Azure Container App to host the new Backend Background Processor
+az containerapp create `
+    --name "$BACKEND_SVC_NAME"  `
+    --resource-group $RESOURCE_GROUP `
+    --environment $ENVIRONMENT `
+    --image "$ACR_NAME.azurecr.io/tasksmanager/$BACKEND_SVC_NAME" `
+    --registry-server "$ACR_NAME.azurecr.io" `
+    --min-replicas 1 `
+    --max-replicas 1 `
+    --cpu 0.25 --memory 0.5Gi `
+    --enable-dapr `
+    --dapr-app-id  $BACKEND_SVC_NAME `
+    --dapr-app-port  80
+#comment out these two lines if you are not using sendgrid
+#--secrets "sendgrid-apikey=<Replace with your SendGrid API Key>" `
+#--env-vars "SendGrid__ApiKey=secretref:sendgrid-apikey" "SendGrid__IntegrationEnabled=true"
+
+# 3. Deploy New Revisions of the Backend API to Azure Container Apps
+## Update Backend API App container app and create a new revision 
+az containerapp update `
+    --name $BACKEND_API_NAME `
+    --resource-group $RESOURCE_GROUP `
+    --revision-suffix v20230220-1 
+
+# 4. Add Azure Service Bus Dapr Pub/Sub Component to Azure Container Apps Environment
+az containerapp env dapr-component set `
+    --name $ENVIRONMENT --resource-group $RESOURCE_GROUP `
+    --dapr-component-name dapr-pubsub-servicebus `
+    --yaml '.\aca-components\containerapps-pubsub-svcbus.yaml'
+
+
+# Configure Managed Identities for Both Container Apps
+# 1. Create system-assigned identity for Backend Processor App
+az containerapp identity assign `
+  --resource-group $RESOURCE_GROUP `
+  --name $BACKEND_SVC_NAME `
+  --system-assigned
+
+
+# 2. Grant Backend Processor App the Azure Service Bus Data Receiver Role
+$subscriptionID = "2e20e6b8-e24f-4d7a-ad5c-bfdde4b8708f" ## Your Azure Subscription id which you can find on the azure portal
+$principalId=az containerapp identity show --resource-group $RESOURCE_GROUP --name $BACKEND_SVC_NAME --query principalId --output tsv ## Principal Id after creating system identity for Backend Processor Container app 
+$roleNameOrId =  "Azure Service Bus Data Receiver" ## Built in role name
+
+az role assignment create `
+--assignee $principalId `
+--role $roleNameOrId `
+--scope /subscriptions/$subscriptionID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ServiceBus/namespaces/$NamespaceName
+
+# 3. Grant Backend API App the Azure Service Bus Data Sender Role
+$principalId =az containerapp identity show --resource-group $RESOURCE_GROUP --name $BACKEND_API_NAME --query principalId -o tsv # Principal Id after creating system identity for container app 
+$roleNameOrId =  "Azure Service Bus Data Sender" ## Built in role name
+
+az role assignment create `
+--assignee $principalId `
+--role $roleNameOrId `
+--scope /subscriptions/$subscriptionID/resourcegroups/$RESOURCE_GROUP/providers/Microsoft.ServiceBus/namespaces/$NamespaceName
+
+
+# 4. Restart Container Apps
+##Get revision name and assign it to a variable
+$REVISION_NAME = (az containerapp revision list `
+        --name $BACKEND_SVC_NAME  `
+        --resource-group $RESOURCE_GROUP `
+        --query [0].name)
+
+##Restart revision by name                            
+az containerapp revision restart `
+--resource-group $RESOURCE_GROUP `
+--name $BACKEND_SVC_NAME  `
+--revision $REVISION_NAME
+
+$REVISION_NAME = (az containerapp revision list `
+        --name $BACKEND_API_NAME  `
+        --resource-group $RESOURCE_GROUP `
+        --query [0].name)
+
+##Restart revision by name                            
+az containerapp revision restart `
+--resource-group $RESOURCE_GROUP `
+--name $BACKEND_API_NAME  `
+--revision $REVISION_NAME
+
+
+
+az containerapp logs show --follow `
+-n $BACKEND_SVC_NAME `
+-g $RESOURCE_GROUP

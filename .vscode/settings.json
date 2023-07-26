@@ -3,7 +3,7 @@
         "profiles": [
             {
                 "name": "localhost",
-                "host": "127.0.0.1",
+                "host": "localhost",
                 "accessKey": "",
                 "filter": "*",
                 "port": "6379"
